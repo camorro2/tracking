@@ -89,7 +89,9 @@ class PasswordGenerator:
             extra += [str(by), str(by)[-2:]]
         if self.info.get("fav_number"):
             extra.append(str(self.info["fav_number"]))
-        phone = re.sub(r"\D", "", str(self.info.get("phone_number") or self.info.get("phone_last4") or ""))
+        phone = re.sub(
+            r"\D", "", str(self.info.get("phone_number") or self.info.get("phone_last4") or "")
+        )
         if len(phone) >= 4:
             extra.append(phone[-4:])
         return list(dict.fromkeys(extra + years + nums))
@@ -148,7 +150,9 @@ class PasswordGenerator:
                 self.passwords.add(p[::-1])
 
         print(f"  {Y}[7/8]{N} Leet Speak")
-        leet_map = str.maketrans({"a": "4", "e": "3", "i": "1", "o": "0", "s": "5", "t": "7"})
+        leet_map = str.maketrans(
+            {"a": "4", "e": "3", "i": "1", "o": "0", "s": "5", "t": "7"}
+        )
         base = list(self.passwords)[:6000]
         for p in base:
             lp = p.translate(leet_map)
