@@ -1,39 +1,12 @@
-# 🔮 Camoro v5.0
+# Camoro v5.0
 
-**AI-Powered Instagram Security Assessment Framework**
+AI-Powered Instagram Security Assessment Framework for **authorized** testing.
 
-إطار اختبار أمني متقدم لتقييم قوة حسابات Instagram، مدعوم بتوليد كلمات مرور ذكي يعتمد على تحليل المعلومات والسلوك البشري.
-
-[![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
-[![Platform](https://img.shields.io/badge/Platform-Termux%20%7C%20Linux-green.svg)](#-التثبيت)
-[![License](https://img.shields.io/badge/License-Educational-orange.svg)](#-إخلاء-المسؤولية)
-[![Version](https://img.shields.io/badge/Version-5.0.0-purple.svg)](#)
-
----
-
-## 📋 المحتويات
-
-- [نظرة عامة](#-نظرة-عامة)
-- [الميزات](#-الميزات)
-- [المتطلبات](#-المتطلبات)
-- [التثبيت](#-التثبيت)
-- [التشغيل](#-التشغيل)
-- [دليل الاستخدام](#-دليل-الاستخدام)
-- [هيكل المشروع](#-هيكل-المشروع)
-- [أمثلة الأوامر](#-أمثلة-الأوامر)
-- [النتائج](#-النتائج)
-- [استكشاف الأخطاء](#-استكشاف-الأخطاء)
-- [إخلاء المسؤولية](#-إخلاء-المسؤولية)
-
----
-
-## 🧠 نظرة عامة
-
-**Camoro** أداة CLI احترافية تعمل على **Termux** و **Linux**، مصممة لمحترفي الأمن السيبراني واختبارات الاختراق المصرّح بها.
-
-تقوم الأداة بثلاث مراحل رئيسية:
-
-```text
-1) جمع المعلومات (Recon)
-2) توليد كلمات مرور ذكية (~20,000)
-3) اختبار قوة كلمة المرور (مع تدوير IP)
+## Install (Termux)
+```bash
+pkg update -y
+pkg install -y git python python-pip tor curl
+git clone https://github.com/CamarO-Pro/CamarO-Pro.git
+cd CamarO-Pro
+bash install.sh
+python camoro.py
