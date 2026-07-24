@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Camoro - Information Gathering (fixed working recon)"""
+"""Camoro - Information Gathering"""
 
 from __future__ import annotations
 
@@ -11,26 +11,26 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 try:
     import httpx
 except ImportError:
-    raise SystemExit("[!] pip install httpx") from None
+    print("[!] pip install httpx")
+    sys.exit(1)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 RESULTS_DIR = BASE_DIR / "results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-R = "\033[0;31m"
 G = "\033[0;32m"
-Y = "\033[1;33m"
+R = "\033[0;31m"
 C = "\033[0;36m"
+Y = "\033[1;33m"
 W = "\033[1;37m"
 P = "\033[0;35m"
 N = "\033[0m"
 
-# App-ID الرسمي لواجهة الويب العامة
 IG_APP_ID = "936619743392459"
 
 USER_AGENTS = [
@@ -42,757 +42,340 @@ USER_AGENTS = [
 
 
 class InfoGatherer:
-    def __init__(self, username: str, proxy_manager: Any = None, use_proxy: bool = False) -> None:
-        """
-        use_proxy=False افتراضياً لأن Tor غالباً كيعلق recon على Instagram.
-        فعّله فقط إذا احتاجيت IP rotation.
-        """
+    def __init__(self, username: str, proxy_manager=None) -> None:
         self.username = username.strip().lstrip("@").lower()
-        self.proxy_manager = proxy_manager
-        self.use_proxy = use_proxy
+        self.proxy_manager = proxy_manager  # reserved; recon uses direct
         self.info: Dict[str, Any] = {
             "username": self.username,
             "exists": False,
-            "user_id": None,
-            "instagram_id": None,
+            "blocked": False,
+            "error": None,
             "full_name": "",
             "biography": "",
-            "external_url": "",
-            "is_private": None,
-            "is_verified": None,
-            "is_business": None,
-            "followers": 0,
-            "following": 0,
-            "posts": 0,
             "followers_count": 0,
             "following_count": 0,
             "posts_count": 0,
-            "profile_pic_url": "",
-            "profile_pic": "",
-            "category": "",
+            "is_private": None,
+            "is_verified": None,
+            "is_business": None,
             "business_category": "",
-            "public_email": "",
-            "public_phone": "",
-            "keywords": [],
-            "possible_names": [],
-            "years_found": [],
+            "external_url": "",
+            "instagram_id": "",
+            "profile_pic": "",
             "source": "",
-            "gathered_at": "",
             "collected_at": "",
         }
-        self.user_dir = RESULTS_DIR / self.username
-        self.user_dir.mkdir(parents=True, exist_ok=True)
 
-    def _headers(self, api: bool = False) -> Dict[str, str]:
-        h = {
+    def _headers(self) -> Dict[str, str]:
+        return {
             "User-Agent": random.choice(USER_AGENTS),
+            "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Referer": "https://www.instagram.com/",
-            "Origin": "https://www.instagram.com",
             "X-IG-App-ID": IG_APP_ID,
             "X-ASBD-ID": "129477",
-            "X-IG-WWW-Claim": "0",
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Dest": "empty",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": "https://www.instagram.com/",
+            "Origin": "https://www.instagram.com",
         }
-        if api:
-            h["Accept"] = "*/*"
-            h["X-Requested-With"] = "XMLHttpRequest"
-        else:
-            h["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        return h
 
-    def _make_client(self, timeout: float = 15.0) -> httpx.Client:
-        kwargs: Dict[str, Any] = {
-            "headers": self._headers(api=True),
-            "timeout": httpx.Timeout(timeout, connect=8.0),
-            "follow_redirects": True,
-            "verify": False,
-        }
-        if self.use_proxy and self.proxy_manager is not None:
-            try:
-                p = self.proxy_manager.get_proxy()
-                if p:
-                    kwargs["proxy"] = p
-                    print(f"  {Y}[proxy]{N} {p}")
-            except Exception:
-                pass
-        return httpx.Client(**kwargs)
-
-    @staticmethod
-    def _count(val: Any) -> int:
-        try:
-            if val is None:
-                return 0
-            if isinstance(val, dict):
-                val = val.get("count", 0)
-            return int(val or 0)
-        except Exception:
-            return 0
-
-    def _apply_user(self, user: dict, source: str) -> bool:
-        if not user or not isinstance(user, dict):
-            return False
-
-        uid = user.get("id") or user.get("pk") or user.get("pk_id")
-        uname = (user.get("username") or "").lower()
-        if uname and uname != self.username:
-            # مش الحساب المطلوب
-            if not uid:
-                return False
-
-        followers = self._count(
-            user.get("edge_followed_by")
-            or user.get("follower_count")
-            or user.get("followers")
-        )
-        following = self._count(
-            user.get("edge_follow")
-            or user.get("following_count")
-            or user.get("following")
-        )
-        posts = self._count(
-            user.get("edge_owner_to_timeline_media")
-            or user.get("media_count")
-            or user.get("posts")
+    def _client(self) -> httpx.Client:
+        # Recon = DIRECT (no Tor) — more reliable
+        return httpx.Client(
+            headers=self._headers(),
+            timeout=httpx.Timeout(12.0, connect=6.0),
+            follow_redirects=True,
+            verify=False,
         )
 
-        full_name = user.get("full_name") or ""
-        bio = user.get("biography") or ""
-        pic = (
-            user.get("profile_pic_url_hd")
+    def _map_user(self, user: dict, source: str) -> Dict[str, Any]:
+        followers = 0
+        following = 0
+        posts = 0
+        efb = user.get("edge_followed_by") or {}
+        efl = user.get("edge_follow") or {}
+        eot = user.get("edge_owner_to_timeline_media") or {}
+        if isinstance(efb, dict):
+            followers = int(efb.get("count") or 0)
+        if isinstance(efl, dict):
+            following = int(efl.get("count") or 0)
+        if isinstance(eot, dict):
+            posts = int(eot.get("count") or 0)
+        followers = followers or int(user.get("follower_count") or 0)
+        following = following or int(user.get("following_count") or 0)
+        posts = posts or int(user.get("media_count") or 0)
+        return {
+            "exists": True,
+            "blocked": False,
+            "error": None,
+            "full_name": user.get("full_name") or "",
+            "biography": user.get("biography") or "",
+            "followers_count": followers,
+            "following_count": following,
+            "posts_count": posts,
+            "is_private": bool(user.get("is_private", False)),
+            "is_verified": bool(user.get("is_verified", False)),
+            "is_business": bool(
+                user.get("is_business_account", False) or user.get("is_business", False)
+            ),
+            "business_category": user.get("business_category_name")
+            or user.get("category_name")
+            or "",
+            "external_url": user.get("external_url") or "",
+            "instagram_id": str(user.get("id") or user.get("pk") or ""),
+            "profile_pic": user.get("profile_pic_url_hd")
             or user.get("profile_pic_url")
-            or ""
-        )
-        if isinstance(user.get("hd_profile_pic_url_info"), dict):
-            pic = user["hd_profile_pic_url_info"].get("url") or pic
+            or "",
+            "source": source,
+        }
 
-        self.info.update(
-            {
-                "exists": True,
-                "user_id": str(uid) if uid else self.info.get("user_id"),
-                "instagram_id": str(uid) if uid else self.info.get("instagram_id"),
-                "full_name": full_name or self.info.get("full_name") or "",
-                "biography": bio or self.info.get("biography") or "",
-                "external_url": user.get("external_url")
-                or self.info.get("external_url")
-                or "",
-                "is_private": user.get("is_private"),
-                "is_verified": user.get("is_verified"),
-                "is_business": bool(
-                    user.get("is_business_account")
-                    or user.get("is_business")
-                    or user.get("is_professional_account")
-                ),
-                "followers": followers,
-                "following": following,
-                "posts": posts,
-                "followers_count": followers,
-                "following_count": following,
-                "posts_count": posts,
-                "profile_pic_url": str(pic) if pic else "",
-                "profile_pic": str(pic) if pic else "",
-                "category": user.get("category_name")
-                or user.get("business_category_name")
-                or "",
-                "business_category": user.get("business_category_name")
-                or user.get("category_name")
-                or "",
-                "public_email": user.get("business_email")
-                or user.get("public_email")
-                or "",
-                "public_phone": user.get("business_phone_number")
-                or user.get("contact_phone_number")
-                or user.get("public_phone_number")
-                or "",
-                "source": source,
-            }
+    def _try_ios_api(self) -> Optional[Dict[str, Any]]:
+        url = (
+            "https://i.instagram.com/api/v1/users/web_profile_info/"
+            f"?username={self.username}"
         )
-        return True
-
-    # ─────────────────────────────────────────────
-    # Method 1: i.instagram.com (الأقوى حالياً)
-    # ─────────────────────────────────────────────
-    def method_ios_api(self) -> bool:
-        print(f"  {C}[1/5]{N} i.instagram API ...", end=" ", flush=True)
-        url = f"https://i.instagram.com/api/v1/users/web_profile_info/?username={self.username}"
         try:
-            with self._make_client(12.0) as client:
-                # تسخين session (cookies)
+            with self._client() as c:
                 try:
-                    client.get("https://www.instagram.com/", headers=self._headers(False))
+                    c.get("https://www.instagram.com/")
                 except Exception:
                     pass
-                r = client.get(url, headers=self._headers(True))
+                r = c.get(url)
                 if r.status_code == 404:
-                    print(f"{R}not found{N}")
-                    self.info["exists"] = False
-                    return False
+                    return {"exists": False, "blocked": False, "error": "not_found"}
+                if r.status_code in (401, 403):
+                    return {"exists": None, "blocked": True, "error": f"blocked_{r.status_code}"}
+                if r.status_code == 429:
+                    return {"exists": None, "blocked": True, "error": "rate_limit"}
                 if r.status_code != 200:
-                    print(f"{Y}HTTP {r.status_code}{N}")
-                    return False
-                data = r.json()
-                user = (data.get("data") or {}).get("user")
-                if not user:
-                    print(f"{Y}empty{N}")
-                    return False
-                ok = self._apply_user(user, "i.instagram.com/web_profile_info")
-                print(f"{G}OK{N}" if ok else f"{Y}empty{N}")
-                return ok
-        except httpx.TimeoutException:
-            print(f"{R}timeout{N}")
-            return False
-        except Exception as e:
-            print(f"{R}{type(e).__name__}{N}")
-            return False
-
-    # ─────────────────────────────────────────────
-    # Method 2: www web_profile_info
-    # ─────────────────────────────────────────────
-    def method_web_api(self) -> bool:
-        print(f"  {C}[2/5]{N} www web API ...", end=" ", flush=True)
-        url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={self.username}"
-        try:
-            with self._make_client(12.0) as client:
-                try:
-                    client.get("https://www.instagram.com/")
-                except Exception:
-                    pass
-                r = client.get(url, headers=self._headers(True))
-                if r.status_code != 200:
-                    print(f"{Y}HTTP {r.status_code}{N}")
-                    return False
+                    return {"exists": None, "blocked": True, "error": f"http_{r.status_code}"}
                 user = (r.json().get("data") or {}).get("user")
                 if not user:
-                    print(f"{Y}empty{N}")
-                    return False
-                ok = self._apply_user(user, "www/web_profile_info")
-                print(f"{G}OK{N}" if ok else f"{Y}empty{N}")
-                return ok
+                    return {"exists": None, "blocked": True, "error": "empty"}
+                return self._map_user(user, "i.instagram.com")
         except httpx.TimeoutException:
-            print(f"{R}timeout{N}")
-            return False
+            return {"exists": None, "blocked": True, "error": "timeout"}
         except Exception as e:
-            print(f"{R}{type(e).__name__}{N}")
-            return False
+            return {"exists": None, "blocked": True, "error": type(e).__name__}
 
-    # ─────────────────────────────────────────────
-    # Method 3: HTML + meta + shared JSON
-    # ─────────────────────────────────────────────
-    def method_html(self) -> bool:
-        print(f"  {C}[3/5]{N} HTML scrape ...", end=" ", flush=True)
+    def _try_web_api(self) -> Optional[Dict[str, Any]]:
+        url = (
+            "https://www.instagram.com/api/v1/users/web_profile_info/"
+            f"?username={self.username}"
+        )
+        try:
+            with self._client() as c:
+                try:
+                    c.get("https://www.instagram.com/")
+                except Exception:
+                    pass
+                r = c.get(url)
+                if r.status_code == 404:
+                    return {"exists": False, "blocked": False, "error": "not_found"}
+                if r.status_code != 200:
+                    return {"exists": None, "blocked": True, "error": f"http_{r.status_code}"}
+                user = (r.json().get("data") or {}).get("user")
+                if not user:
+                    return None
+                return self._map_user(user, "www.web_profile_info")
+        except Exception:
+            return None
+
+    def _try_html(self) -> Optional[Dict[str, Any]]:
         url = f"https://www.instagram.com/{self.username}/"
         try:
-            with self._make_client(15.0) as client:
-                r = client.get(url, headers=self._headers(False))
-                if r.status_code == 404:
-                    print(f"{R}not found{N}")
-                    self.info["exists"] = False
-                    return False
-                if r.status_code != 200:
-                    print(f"{Y}HTTP {r.status_code}{N}")
-                    return False
-
+            with self._client() as c:
+                r = c.get(url, headers={**self._headers(), "Accept": "text/html"})
                 html = r.text
-                if "Sorry, this page isn't available" in html:
-                    print(f"{R}not found{N}")
-                    self.info["exists"] = False
-                    return False
+                if r.status_code == 404 or "Sorry, this page isn't available" in html:
+                    return {"exists": False, "blocked": False, "error": "not_found"}
+                if r.status_code != 200:
+                    return {"exists": None, "blocked": True, "error": f"http_{r.status_code}"}
 
-                # 1) _sharedData
-                m = re.search(
-                    r"window\._sharedData\s*=\s*(\{.+?\});\s*</script>",
-                    html,
-                    re.DOTALL,
-                )
-                if m:
-                    try:
-                        data = json.loads(m.group(1))
-                        user = (
-                            data.get("entry_data", {})
-                            .get("ProfilePage", [{}])[0]
-                            .get("graphql", {})
-                            .get("user")
-                        )
-                        if user and self._apply_user(user, "html_sharedData"):
-                            print(f"{G}OK{N}")
-                            return True
-                    except Exception:
-                        pass
+                info: Dict[str, Any] = {
+                    "exists": True,
+                    "blocked": False,
+                    "error": None,
+                    "source": "html",
+                }
 
-                # 2) JSON blobs داخل script type="application/json"
-                for m in re.finditer(
-                    r'<script[^>]*type="application/json"[^>]*>(\{.*?\})</script>',
-                    html,
-                    re.DOTALL,
-                ):
-                    try:
-                        blob = m.group(1)
-                        if "follower" not in blob and "full_name" not in blob:
-                            continue
-                        # ابحث عن user object
-                        um = re.search(
-                            r'"user"\s*:\s*(\{(?:[^{}]|\{[^{}]*\})*\})',
-                            blob,
-                        )
-                        # fallback: parse whole and walk
-                        data = json.loads(blob)
-                        user = self._find_user_dict(data)
-                        if user and self._apply_user(user, "html_app_json"):
-                            print(f"{G}OK{N}")
-                            return True
-                    except Exception:
-                        continue
+                def grab(pat: str):
+                    m = re.search(pat, html)
+                    return m.group(1) if m else None
 
-                # 3) meta tags (og:description فيه المتابعين)
-                info_got = False
-                og_title = self._meta(html, "og:title")
-                og_desc = self._meta(html, "og:description") or self._meta(html, "description")
-                og_image = self._meta(html, "og:image")
-
-                if og_title:
-                    # "Name (@user) • Instagram photos and videos"
-                    name = re.sub(r"\s*\(@[^)]+\).*", "", og_title).strip()
+                title = grab(r'property="og:title" content="([^"]+)"')
+                if title:
+                    name = re.sub(r"\s*\(@[^)]+\).*", "", title)
                     name = re.sub(r"\s*[•·].*", "", name).strip()
                     if name and "instagram" not in name.lower():
-                        self.info["full_name"] = name
-                        info_got = True
+                        info["full_name"] = name
 
-                if og_desc:
-                    # "1,234 Followers, 56 Following, 7 Posts - Bio here"
-                    cm = re.search(
-                        r"([\d,\.]+[KkMm]?)\s*Followers?,\s*([\d,\.]+[KkMm]?)\s*Following,\s*([\d,\.]+[KkMm]?)\s*Posts?",
-                        og_desc,
+                desc = grab(r'property="og:description" content="([^"]+)"') or grab(
+                    r'name="description" content="([^"]+)"'
+                )
+                if desc:
+                    m = re.search(
+                        r"([\d,\.]+)\s*Followers?,\s*([\d,\.]+)\s*Following,\s*([\d,\.]+)\s*Posts?",
+                        desc,
                         re.I,
                     )
-                    if cm:
-                        self.info["followers"] = self._parse_human(cm.group(1))
-                        self.info["following"] = self._parse_human(cm.group(2))
-                        self.info["posts"] = self._parse_human(cm.group(3))
-                        self.info["followers_count"] = self.info["followers"]
-                        self.info["following_count"] = self.info["following"]
-                        self.info["posts_count"] = self.info["posts"]
+                    if m:
+                        def ph(s):
+                            s = s.replace(",", "").lower()
+                            if s.endswith("k"):
+                                return int(float(s[:-1]) * 1000)
+                            if s.endswith("m"):
+                                return int(float(s[:-1]) * 1_000_000)
+                            return int(float(s))
+
+                        info["followers_count"] = ph(m.group(1))
+                        info["following_count"] = ph(m.group(2))
+                        info["posts_count"] = ph(m.group(3))
                         bio = re.sub(
-                            r"^[\d,\.]+[KkMm]?\s*Followers?,\s*[\d,\.]+[KkMm]?\s*Following,\s*[\d,\.]+[KkMm]?\s*Posts?\s*[-–—:]?\s*",
+                            r"^[\d,\.]+\s*Followers?,\s*[\d,\.]+\s*Following,\s*[\d,\.]+\s*Posts?\s*[-–—]?\s*",
                             "",
-                            og_desc,
+                            desc,
                             flags=re.I,
                         ).strip()
                         if bio:
-                            self.info["biography"] = bio
-                        info_got = True
-                    elif not self.info.get("biography"):
-                        self.info["biography"] = og_desc
-                        info_got = True
+                            info["biography"] = bio
 
-                if og_image:
-                    self.info["profile_pic_url"] = og_image
-                    self.info["profile_pic"] = og_image
-                    info_got = True
-
-                # regex fallbacks
+                fn = grab(r'"full_name":"([^"]*)"')
+                if fn and not info.get("full_name"):
+                    info["full_name"] = fn.encode().decode("unicode_escape", errors="ignore")
+                bio = grab(r'"biography":"([^"]*)"')
+                if bio and not info.get("biography"):
+                    info["biography"] = bio.encode().decode("unicode_escape", errors="ignore")
                 for key, pat in [
-                    ("full_name", r'"full_name"\s*:\s*"([^"]*)"'),
-                    ("biography", r'"biography"\s*:\s*"((?:[^"\\]|\\.)*)"'),
-                    ("user_id", r'"profilePage_(\d+)"'),
-                    ("user_id", r'"id"\s*:\s*"(\d+)"'),
+                    ("followers_count", r'"edge_followed_by":\{"count":(\d+)\}'),
+                    ("following_count", r'"edge_follow":\{"count":(\d+)\}'),
+                    ("posts_count", r'"edge_owner_to_timeline_media":\{"count":(\d+)\}'),
                 ]:
-                    mm = re.search(pat, html)
-                    if mm and not self.info.get(key):
-                        val = mm.group(1)
-                        if key == "biography":
-                            try:
-                                val = json.loads(f'"{val}"')
-                            except Exception:
-                                val = val.encode().decode("unicode_escape", errors="ignore")
-                        self.info[key] = val
-                        if key == "user_id":
-                            self.info["instagram_id"] = val
-                        info_got = True
-
-                for key, pat in [
-                    ("followers", r'"edge_followed_by"\s*:\s*\{\s*"count"\s*:\s*(\d+)'),
-                    ("following", r'"edge_follow"\s*:\s*\{\s*"count"\s*:\s*(\d+)'),
-                    ("posts", r'"edge_owner_to_timeline_media"\s*:\s*\{\s*"count"\s*:\s*(\d+)'),
-                    ("followers", r'"follower_count"\s*:\s*(\d+)'),
-                    ("following", r'"following_count"\s*:\s*(\d+)'),
-                    ("posts", r'"media_count"\s*:\s*(\d+)'),
-                ]:
-                    mm = re.search(pat, html)
-                    if mm:
-                        self.info[key] = int(mm.group(1))
-                        self.info[f"{key}_count" if key != "posts" else "posts_count"] = int(
-                            mm.group(1)
-                        )
-                        if key == "posts":
-                            self.info["posts_count"] = int(mm.group(1))
-                        if key == "followers":
-                            self.info["followers_count"] = int(mm.group(1))
-                        if key == "following":
-                            self.info["following_count"] = int(mm.group(1))
-                        info_got = True
-
-                if '"is_private":true' in html or '"is_private": true' in html:
-                    self.info["is_private"] = True
-                elif '"is_private":false' in html or '"is_private": false' in html:
-                    self.info["is_private"] = False
-
-                if info_got:
-                    self.info["exists"] = True
-                    self.info["source"] = "html_meta"
-                    print(f"{G}OK{N}")
-                    return True
-
-                print(f"{Y}no data{N}")
-                return False
-        except httpx.TimeoutException:
-            print(f"{R}timeout{N}")
-            return False
-        except Exception as e:
-            print(f"{R}{type(e).__name__}{N}")
-            return False
-
-    def _find_user_dict(self, obj: Any, depth: int = 0) -> Optional[dict]:
-        if depth > 8:
-            return None
-        if isinstance(obj, dict):
-            # signature of IG user object
-            if (
-                ("username" in obj or "full_name" in obj)
-                and (
-                    "edge_followed_by" in obj
-                    or "follower_count" in obj
-                    or "biography" in obj
+                    m = re.search(pat, html)
+                    if m:
+                        info[key] = int(m.group(1))
+                info["is_private"] = '"is_private":true' in html
+                info["is_verified"] = '"is_verified":true' in html
+                pic = grab(r'"profile_pic_url_hd":"([^"]+)"') or grab(
+                    r'"profile_pic_url":"([^"]+)"'
                 )
-            ):
-                un = str(obj.get("username", "")).lower()
-                if not un or un == self.username:
-                    return obj
-            for v in obj.values():
-                found = self._find_user_dict(v, depth + 1)
-                if found:
-                    return found
-        elif isinstance(obj, list):
-            for item in obj[:50]:
-                found = self._find_user_dict(item, depth + 1)
-                if found:
-                    return found
-        return None
+                if pic:
+                    info["profile_pic"] = pic.replace("\\u0026", "&")
+                i_id = grab(r'"profilePage_(\d+)"') or grab(r'"id":"(\d+)"')
+                if i_id:
+                    info["instagram_id"] = i_id
 
-    @staticmethod
-    def _meta(html: str, prop: str) -> str:
-        m = re.search(
-            rf'<meta[^>]+(?:property|name)=["\']{re.escape(prop)}["\'][^>]+content=["\']([^"\']*)["\']',
-            html,
-            re.I,
-        )
-        if not m:
-            m = re.search(
-                rf'<meta[^>]+content=["\']([^"\']*)["\'][^>]+(?:property|name)=["\']{re.escape(prop)}["\']',
-                html,
-                re.I,
-            )
-        if not m:
-            return ""
-        return (
-            m.group(1)
-            .replace("&amp;", "&")
-            .replace("&#064;", "@")
-            .replace("&quot;", '"')
-            .strip()
-        )
-
-    @staticmethod
-    def _parse_human(s: str) -> int:
-        s = (s or "").strip().lower().replace(",", "").replace(" ", "")
-        try:
-            if s.endswith("k"):
-                return int(float(s[:-1]) * 1000)
-            if s.endswith("m"):
-                return int(float(s[:-1]) * 1_000_000)
-            return int(float(s))
+                if info.get("full_name") or info.get("followers_count") or info.get("instagram_id"):
+                    return info
+                return None
         except Exception:
-            return 0
-
-    # ─────────────────────────────────────────────
-    # Method 4: Embed
-    # ─────────────────────────────────────────────
-    def method_embed(self) -> bool:
-        print(f"  {C}[4/5]{N} Embed page ...", end=" ", flush=True)
-        url = f"https://www.instagram.com/{self.username}/embed/"
-        try:
-            with self._make_client(12.0) as client:
-                r = client.get(url, headers=self._headers(False))
-                if r.status_code != 200:
-                    print(f"{Y}HTTP {r.status_code}{N}")
-                    return False
-                html = r.text
-                got = False
-                m = re.search(r'"full_name"\s*:\s*"([^"]*)"', html)
-                if m and m.group(1):
-                    self.info["full_name"] = (
-                        m.group(1).encode().decode("unicode_escape", errors="ignore")
-                    )
-                    got = True
-                m = re.search(r'"edge_followed_by"\s*:\s*\{\s*"count"\s*:\s*(\d+)', html)
-                if m:
-                    self.info["followers"] = int(m.group(1))
-                    self.info["followers_count"] = int(m.group(1))
-                    got = True
-                m = re.search(r'"edge_follow"\s*:\s*\{\s*"count"\s*:\s*(\d+)', html)
-                if m:
-                    self.info["following"] = int(m.group(1))
-                    self.info["following_count"] = int(m.group(1))
-                    got = True
-                m = re.search(
-                    r'"edge_owner_to_timeline_media"\s*:\s*\{\s*"count"\s*:\s*(\d+)', html
-                )
-                if m:
-                    self.info["posts"] = int(m.group(1))
-                    self.info["posts_count"] = int(m.group(1))
-                    got = True
-                m = re.search(r'"biography"\s*:\s*"((?:[^"\\]|\\.)*)"', html)
-                if m:
-                    try:
-                        self.info["biography"] = json.loads(f'"{m.group(1)}"')
-                    except Exception:
-                        self.info["biography"] = m.group(1)
-                    got = True
-                m = re.search(r'"id"\s*:\s*"(\d+)"', html)
-                if m:
-                    self.info["user_id"] = m.group(1)
-                    self.info["instagram_id"] = m.group(1)
-                    got = True
-                m = re.search(r'"is_private"\s*:\s*(true|false)', html)
-                if m:
-                    self.info["is_private"] = m.group(1) == "true"
-                m = re.search(r'"is_verified"\s*:\s*(true|false)', html)
-                if m:
-                    self.info["is_verified"] = m.group(1) == "true"
-
-                if got:
-                    self.info["exists"] = True
-                    self.info["source"] = "embed"
-                    print(f"{G}OK{N}")
-                    return True
-                print(f"{Y}no data{N}")
-                return False
-        except httpx.TimeoutException:
-            print(f"{R}timeout{N}")
-            return False
-        except Exception as e:
-            print(f"{R}{type(e).__name__}{N}")
-            return False
-
-    # ─────────────────────────────────────────────
-    # Method 5: Topsearch
-    # ─────────────────────────────────────────────
-    def method_topsearch(self) -> bool:
-        print(f"  {C}[5/5]{N} TopSearch ...", end=" ", flush=True)
-        url = "https://www.instagram.com/web/search/topsearch/"
-        try:
-            with self._make_client(10.0) as client:
-                r = client.get(
-                    url,
-                    params={"query": self.username, "context": "blended"},
-                    headers=self._headers(True),
-                )
-                if r.status_code != 200:
-                    print(f"{Y}HTTP {r.status_code}{N}")
-                    return False
-                for item in r.json().get("users", []):
-                    u = item.get("user") or item
-                    if (u.get("username") or "").lower() == self.username:
-                        self.info["exists"] = True
-                        self.info["user_id"] = str(u.get("pk") or u.get("id") or "")
-                        self.info["instagram_id"] = self.info["user_id"]
-                        self.info["full_name"] = u.get("full_name") or self.info.get("full_name") or ""
-                        self.info["is_private"] = u.get("is_private")
-                        self.info["is_verified"] = u.get("is_verified")
-                        self.info["profile_pic_url"] = u.get("profile_pic_url") or ""
-                        self.info["profile_pic"] = self.info["profile_pic_url"]
-                        # topsearch ما كيعطيش followers دائماً — مكملش لو عندنا numbers
-                        if not self.info.get("source") or self.info["source"] == "":
-                            self.info["source"] = "topsearch"
-                        print(f"{G}OK{N}")
-                        return True
-                print(f"{Y}no match{N}")
-                return False
-        except httpx.TimeoutException:
-            print(f"{R}timeout{N}")
-            return False
-        except Exception as e:
-            print(f"{R}{type(e).__name__}{N}")
-            return False
-
-    def _extract_keywords(self) -> None:
-        text = " ".join(
-            str(self.info.get(k) or "")
-            for k in ("full_name", "biography", "username", "category", "external_url")
-        )
-        words = re.findall(r"[A-Za-z\u0600-\u06FF]{3,}", text)
-        seen = set()
-        kws: List[str] = []
-        for w in words:
-            wl = w.lower()
-            if wl not in seen and wl != self.username:
-                seen.add(wl)
-                kws.append(w)
-        self.info["keywords"] = kws[:40]
-
-        names: List[str] = []
-        full = (self.info.get("full_name") or "").strip()
-        if full:
-            names.append(full)
-            for p in re.split(r"[\s_\-\.]+", full):
-                if len(p) >= 2:
-                    names.append(p)
-        for p in re.split(r"[._\-]+", self.username):
-            if len(p) >= 2:
-                names.append(p)
-        self.info["possible_names"] = list(dict.fromkeys(names))[:25]
-        self.info["years_found"] = list(
-            dict.fromkeys(re.findall(r"\b(19[8-9]\d|20[0-3]\d)\b", text))
-        )
+            return None
 
     def gather(self) -> Dict[str, Any]:
-        print(f"\n{C}[*]{N} جمع معلومات @{self.username}")
-        print(f"  {Y}mode:{N} {'proxy/tor' if self.use_proxy else 'direct (أسرع)'}")
-        print()
-
+        print(f"\n{C}[*]{N} جمع معلومات: @{self.username}\n")
         methods = [
-            self.method_ios_api,
-            self.method_web_api,
-            self.method_html,
-            self.method_embed,
-            self.method_topsearch,
+            ("iOS API", self._try_ios_api),
+            ("Web API", self._try_web_api),
+            ("HTML", self._try_html),
         ]
-
-        for fn in methods:
+        last_block = None
+        for name, fn in methods:
+            print(f"  {C}[→]{N} {name} ... ", end="", flush=True)
             try:
-                ok = fn()
+                data = fn()
+                if not data:
+                    print(f"{Y}no data{N}")
+                    continue
+                if data.get("exists") is True:
+                    print(f"{G}OK{N}")
+                    self.info.update(data)
+                    self.info["exists"] = True
+                    self.info["collected_at"] = datetime.now().isoformat()
+                    return self.info
+                if data.get("exists") is False:
+                    print(f"{R}not found{N}")
+                    self.info["exists"] = False
+                    self.info["error"] = "not_found"
+                    self.info["collected_at"] = datetime.now().isoformat()
+                    return self.info
+                # blocked / technical
+                err = data.get("error") or "blocked"
+                last_block = err
+                print(f"{Y}{err}{N}")
             except Exception as e:
-                print(f"  {R}error: {e}{N}")
-                ok = False
+                print(f"{R}fail ({e}){N}")
+            time.sleep(0.5)
 
-            # نجاح كامل = عندنا followers أو full_name على الأقل
-            if ok and self.info.get("exists"):
-                if (
-                    self.info.get("followers")
-                    or self.info.get("full_name")
-                    or self.info.get("user_id")
-                ):
-                    # إذا جينا من topsearch بلا أرقام .كمّل المحاولات
-                    if self.info.get("source") == "topsearch" and not self.info.get("followers"):
-                        time.sleep(0.5)
-                        continue
-                    break
-            time.sleep(random.uniform(0.3, 0.8))
-
-        now = datetime.now().isoformat()
-        self.info["gathered_at"] = now
-        self.info["collected_at"] = now
-
-        if self.info.get("exists"):
-            self._extract_keywords()
-            print(f"\n{G}[✓]{N} تم التحليل بنجاح (source={self.info.get('source')})")
+        if last_block:
+            print(f"\n{Y}[!]{N} Instagram حاجب/فشل الشبكة: {last_block}")
+            print(f"    الحساب قد يكون موجود — عطّل Tor وبدّل WiFi/VPN")
+            self.info["exists"] = False
+            self.info["blocked"] = True
+            self.info["error"] = last_block
         else:
-            print(f"\n{R}[!]{N} فشل التحليل — الحساب غير موجود أو Instagram حاجب الـ IP")
-            print(f"  {Y}جرّب:{N} شبكة أخرى / VPN / عطّل Tor / بدّل IP")
-
+            self.info["exists"] = False
+            self.info["error"] = "failed"
+        self.info["collected_at"] = datetime.now().isoformat()
         return self.info
 
-    def save(self, path: Optional[Path] = None) -> Path:
-        out = path or (self.user_dir / "info.json")
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(self.info, indent=2, ensure_ascii=False), encoding="utf-8")
-
-        txt = self.user_dir / "info.txt"
-        lines = [
-            f"Username  : @{self.info.get('username')}",
-            f"Exists    : {self.info.get('exists')}",
-            f"User ID   : {self.info.get('user_id')}",
-            f"Full Name : {self.info.get('full_name')}",
-            f"Bio       : {self.info.get('biography')}",
-            f"Followers : {self.info.get('followers')}",
-            f"Following : {self.info.get('following')}",
-            f"Posts     : {self.info.get('posts')}",
-            f"Private   : {self.info.get('is_private')}",
-            f"Verified  : {self.info.get('is_verified')}",
-            f"Business  : {self.info.get('is_business')}",
-            f"Website   : {self.info.get('external_url')}",
-            f"Email     : {self.info.get('public_email')}",
-            f"Phone     : {self.info.get('public_phone')}",
-            f"Category  : {self.info.get('category')}",
-            f"Keywords  : {', '.join(self.info.get('keywords') or [])}",
-            f"Source    : {self.info.get('source')}",
-            f"Time      : {self.info.get('gathered_at')}",
-        ]
-        txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        print(f"{G}[✓]{N} حفظ: {out}")
-        return out
+    def save(self) -> Path:
+        user_dir = RESULTS_DIR / self.username
+        user_dir.mkdir(parents=True, exist_ok=True)
+        path = user_dir / "info.json"
+        path.write_text(
+            json.dumps(self.info, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"{G}[✓]{N} حفظ: {path}")
+        return path
 
     def display(self) -> None:
-        i = self.info
-        print(f"\n{P}╔══════════════════════════════════════╗{N}")
-        print(f"{P}║{N}     {W}تحليل الحساب — Camoro Recon{N}      {P}║{N}")
-        print(f"{P}╚══════════════════════════════════════╝{N}")
-
-        if not i.get("exists"):
-            print(f"{R}  [!] الحساب غير موجود أو محجوب{N}\n")
+        print(f"\n{P}════ معلومات الحساب ════{N}")
+        if self.info.get("blocked"):
+            print(f"{Y}[!] فشل تقني / حظر: {self.info.get('error')}{N}")
+            print(f"    ليس بالضرورة أن الحساب غير موجود.")
             return
-
-        def row(label: str, val: Any) -> None:
-            if val is None or val == "" or val == []:
-                val = "-"
+        if not self.info.get("exists"):
+            print(f"{R}[!] الحساب غير موجود{N}")
+            return
+        rows = [
+            ("username", "المستخدم"),
+            ("full_name", "الاسم"),
+            ("biography", "البايو"),
+            ("followers_count", "متابعون"),
+            ("following_count", "يتابع"),
+            ("posts_count", "منشورات"),
+            ("is_private", "خاص"),
+            ("is_verified", "موثق"),
+            ("is_business", "تجاري"),
+            ("business_category", "التصنيف"),
+            ("external_url", "رابط"),
+            ("instagram_id", "ID"),
+            ("source", "المصدر"),
+        ]
+        for key, label in rows:
+            val = self.info.get(key)
+            if val in (None, "", False, 0, []):
+                if key in ("followers_count", "following_count", "posts_count") and val == 0:
+                    pass
+                else:
+                    if val in (None, "", []):
+                        continue
             if isinstance(val, bool):
-                val = f"{G}نعم{N}" if val else f"{R}لا{N}"
-            if isinstance(val, int):
+                val = "نعم" if val else "لا"
+            elif isinstance(val, int):
                 val = f"{val:,}"
-            print(f"  {C}{label:<12}{N} {W}{val}{N}")
-
-        row("المستخدم", f"@{i.get('username')}")
-        row("الاسم", i.get("full_name"))
-        row("البايو", (i.get("biography") or "-")[:80])
-        row("المتابعون", i.get("followers"))
-        row("يتابع", i.get("following"))
-        row("المنشورات", i.get("posts"))
-        row("خاص", i.get("is_private"))
-        row("موثّق", i.get("is_verified"))
-        row("تجاري", i.get("is_business"))
-        row("ID", i.get("user_id"))
-        row("الموقع", i.get("external_url"))
-        row("التصنيف", i.get("category"))
-        row("المصدر", i.get("source"))
-        if i.get("keywords"):
-            row("كلمات", ", ".join((i.get("keywords") or [])[:8]))
+            print(f"  {Y}{label}:{N} {W}{val}{N}")
         print()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Camoro Info Gatherer")
     parser.add_argument("-u", "--username", required=True)
-    parser.add_argument("--proxy", action="store_true", help="استخدم Tor/Proxy (أبطأ)")
     args = parser.parse_args()
-
-    proxy = None
-    if args.proxy:
-        try:
-            sys.path.insert(0, str(BASE_DIR))
-            from modules.proxy_manager import ProxyManager
-
-            proxy = ProxyManager()
-        except Exception:
-            proxy = None
-
-    g = InfoGatherer(args.username, proxy_manager=proxy, use_proxy=args.proxy)
-    g.gather()
+    g = InfoGatherer(args.username, proxy_manager=None)
+    data = g.gather()
     g.save()
     g.display()
-    sys.exit(0 if g.info.get("exists") else 1)
+    sys.exit(0 if data.get("exists") else 1)
 
 
 if __name__ == "__main__":
