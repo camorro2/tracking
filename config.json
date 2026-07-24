@@ -1,0 +1,14 @@
+{
+    "ai_provider": "groq",
+    "ai_model": "llama3-70b-8192",
+    "api_key": "",
+    "max_passwords": 100000,
+    "threads": 20,
+    "use_proxies": true,
+    "proxy_file": "proxies.txt",
+    "timeout": 15,
+    "delay_min": 1.5,
+    "delay_max": 3.5,
+    "save_results": true,
+    "output_dir": "results"
+}
